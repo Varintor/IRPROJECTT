@@ -2,3 +2,8 @@
 /recipes.parquet
 /reviews.csv
 /reviews.parquet
+http_ca.crt
+.idea
+.vscode
+__pycache__
+resources/recipes_final_for_search.csv
