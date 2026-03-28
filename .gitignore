@@ -7,3 +7,8 @@ http_ca.crt
 .vscode
 __pycache__
 resources/recipes_final_for_search.csv
+test-connection.ps1
+recipes_updated.csv
+backend/resources/recipes_final_for_search.csv
+data
+cleaned_ready_for_es.pkl
