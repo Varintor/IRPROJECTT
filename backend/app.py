@@ -4,7 +4,7 @@ from config import Config
 from models import db
 from elastic_search import search as elastic_search
 from spell_checker import init_spell_checker
-from data_loader import get_documents
+from shared_indexer import preload_indexer, get_shared_indexer
 from datetime import datetime
 import logging
 
@@ -16,16 +16,47 @@ app = Flask(__name__)
 app.config.from_object(Config)
 
 # Enable CORS for ALL origins in development
-CORS(app, origins=["http://localhost:5173", "http://localhost:3000", "http://localhost:5174", "http://localhost:8080"], supports_credentials=True)
+CORS(app, origins=["http://localhost:5173", "http://localhost:3000", "http://localhost:5174", "http://localhost:5175", "http://localhost:8080"], supports_credentials=True)
 
 # Initialize database
 db.init_app(app)
 
-# Initialize spell checker with recipe vocabulary (lazy load)
-logger.info("Loading spell checker...")
-documents = get_documents()
-spell_checker = init_spell_checker(documents)
-logger.info("✅ Spell checker initialized")
+# ✅ FIX: Ensure database sessions are cleaned up after each request
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    """Clean up database session after each request"""
+    db.session.remove()
+    logger.debug("Database session cleaned up")
+
+# Import and register blueprints AFTER app is created (avoid circular import)
+from api_auth import api_auth_bp
+from api_bookmarks import api_bookmarks_bp
+
+app.register_blueprint(api_auth_bp)
+app.register_blueprint(api_bookmarks_bp)
+
+# Spell checker (using shared indexer)
+spell_checker = None
+_spell_checker_loaded = False
+
+def initialize_spell_checker():
+    """Initialize spell checker on first use (uses shared indexer)"""
+    global spell_checker, _spell_checker_loaded
+    if not _spell_checker_loaded:
+        logger.info("📝 Initializing spell checker (using shared indexer)...")
+        indexer = get_shared_indexer()
+        documents = indexer.documents
+        spell_checker = init_spell_checker(documents)
+        _spell_checker_loaded = True
+        logger.info("✅ Spell checker initialized")
+    return spell_checker
+
+@app.before_request
+def load_spell_checker_if_needed():
+    """Load spell checker on first search request (NOT for health check)"""
+    # Only load for search endpoints, not health check or auth
+    if request.path.startswith('/search') or request.path.startswith('/api/spellcheck'):
+        initialize_spell_checker()
 
 # Health check endpoint
 @app.route("/api/health", methods=["GET"])
@@ -38,6 +69,31 @@ def health_check():
         "database": "PostgreSQL connected",
         "search": "Elasticsearch ready"
     })
+
+# Test database endpoint
+@app.route("/api/test-db", methods=["GET"])
+def test_database():
+    """Test database connection"""
+    import time
+    start = time.time()
+    try:
+        from models import User
+        count = User.query.count()
+        elapsed = time.time() - start
+        logger.info(f"✅ Database test: {count} users in {elapsed:.3f}s")
+        return jsonify({
+            "status": "ok",
+            "user_count": count,
+            "query_time": f"{elapsed:.3f}s"
+        })
+    except Exception as e:
+        elapsed = time.time() - start
+        logger.error(f"❌ Database test failed after {elapsed:.3f}s: {e}")
+        return jsonify({
+            "status": "error",
+            "error": str(e),
+            "query_time": f"{elapsed:.3f}s"
+        }), 500
 
 # Test endpoint
 @app.route("/api/test", methods=["GET", "POST"])
@@ -57,7 +113,14 @@ def spell_check_endpoint():
     logger.info("✅ Spell check called")
 
     if not spell_checker:
-        return jsonify({"error": "Spell checker not available"}), 503
+        # Return no corrections instead of error
+        return jsonify({
+            "original_query": "",
+            "corrected_query": "",
+            "corrections": [],
+            "has_corrections": False,
+            "suggestions": []
+        }), 200
 
     data = request.get_json()
     query = data.get("query", "").strip()
@@ -83,7 +146,14 @@ def spell_check_endpoint():
 
     except Exception as e:
         logger.error(f"Spell check error: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        # Return no corrections instead of error
+        return jsonify({
+            "original_query": query,
+            "corrected_query": query,
+            "corrections": [],
+            "has_corrections": False,
+            "suggestions": []
+        }), 200
 
 # Main routes
 @app.route("/")
@@ -134,10 +204,15 @@ with app.app_context():
 
 if __name__ == "__main__":
     print("=" * 60)
+    print("🔄 Preloading indexer at startup...")
+    print("=" * 60)
+    preload_indexer()  # PRELOAD before server starts!
+    print("=" * 60)
     print("🚀 Starting Flask Backend Server...")
     print("=" * 60)
     print("📊 Database: PostgreSQL (recipe_app)")
     print("🔍 Search: Elasticsearch + TF-IDF")
+    print("📦 Indexer: Preloaded (52K recipes)")
     print("🌐 API Server: http://localhost:5000")
     print("⚛️  Frontend: http://localhost:5173")
     print("=" * 60)

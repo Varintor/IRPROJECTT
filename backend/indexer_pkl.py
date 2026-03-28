@@ -45,8 +45,8 @@ class IndexerFromPKL:
 
         print(f"Loaded {len(self.documents)} recipes")
 
-        # Rename columns from PascalCase to snake_case
-        print("Renaming columns...")
+        # Rename columns from PascalCase to snake_case (เหมือน index "recipes")
+        print("Renaming columns from PascalCase to snake_case...")
         self.documents = self.documents.rename(columns={
             'RecipeId': 'recipe_id',
             'Name': 'name',
@@ -75,7 +75,6 @@ class IndexerFromPKL:
         # Fill missing values
         self.documents["name"] = self.documents["name"].fillna("")
         self.documents["category"] = self.documents["category"].fillna("")
-        # Don't convert processed_text to str - it's already text and would use too much memory
         self.documents["processed_text"] = self.documents["processed_text"].fillna("")
 
         # Handle images
@@ -96,11 +95,17 @@ class IndexerFromPKL:
         else:
             self.documents["ingredient_parts"] = ""
 
-        # Select only required columns + extra useful ones
+        # Handle total_time
+        if 'total_time' in self.documents.columns:
+            self.documents["total_time"] = self.documents["total_time"].fillna("30 min")
+        else:
+            self.documents["total_time"] = "30 min"
+
+        # Select only required columns (snake_case)
         required_cols = [
             "recipe_id", "name", "category", "processed_text",
             "images", "ingredient_parts", "instructions",
-            "aggregated_rating", "review_count"
+            "aggregated_rating", "review_count", "total_time"
         ]
 
         # Check which columns exist

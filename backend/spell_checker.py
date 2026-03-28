@@ -37,16 +37,21 @@ class SpellChecker:
         self.vocabulary = sorted(list(vocab_set))
 
         # Build word frequency for better suggestions
+        # NOTE: Optimized to avoid O(vocab_size * num_documents) nested loop
         word_freq = Counter()
-        for word in vocab_set:
-            # Count occurrences in names (higher weight)
-            for name in names:
-                if word in name.lower():
+
+        # Count word occurrences in all names at once (higher weight)
+        for name in names:
+            words_in_name = set(name.lower().split())
+            for word in words_in_name:
+                if word in vocab_set:
                     word_freq[word] += 3
 
-            # Count occurrences in ingredients
-            for ing_text in ingredients:
-                if word in str(ing_text).lower():
+        # Count word occurrences in all ingredients at once
+        for ing_text in ingredients:
+            words_in_ing = set(str(ing_text).lower().split())
+            for word in words_in_ing:
+                if word in vocab_set:
                     word_freq[word] += 1
 
         self.word_freq = dict(word_freq)
