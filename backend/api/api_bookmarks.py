@@ -2,10 +2,10 @@
 API endpoints for bookmarks, folders, and ratings
 """
 from flask import Blueprint, request, jsonify, current_app
-from models import db, User, Folder, Bookmark, RecipeRating, SearchHistory
-from api_auth import require_auth
+from models.models import db, User, Folder, Bookmark, RecipeRating, SearchHistory
+from .api_auth import require_auth
+from services.shared_indexer import get_shared_indexer
 from datetime import datetime
-from shared_indexer import get_shared_indexer
 import logging
 import pandas as pd
 

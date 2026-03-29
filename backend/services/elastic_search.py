@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from pathlib import Path
 
 import numpy as np
@@ -5,7 +9,7 @@ from elasticsearch import Elasticsearch
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from data_loader import get_documents
+from utils.data_loader import get_documents
 
 # ใช้ index "recipes" ที่มีอยู่ (ไม่ได้สร้างจาก notebook)
 INDEX_NAME = "recipes"
@@ -78,12 +82,12 @@ def elastic_retrieve(query, top_k=100):
             "multi_match": {
                 "query": query,
                 "fields": [
-                    "name^5",           # ชื่อสูตร x5 (สำคัญที่สุด)
-                    "ingredient_parts^2",  # วัตถุดิบ x2
-                    "instructions"  # วิธีทำ x1
+                    "name^5",           
+                    "ingredient_parts^2",  
+                    "instructions"  
                 ],
-                "type": "cross_fields",      # ค้นหาข้าม fields
-                "operator": "and"            # ต้อง match ทุกคำ
+                "type": "cross_fields",      
+                "operator": "and"            
             }
         },
         "suggest": {

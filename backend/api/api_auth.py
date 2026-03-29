@@ -3,7 +3,7 @@ API-based authentication for React frontend
 JSON API with token-based authentication
 """
 from flask import Blueprint, request, jsonify
-from models import db, User, Folder
+from models.models import db, User, Folder
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import re

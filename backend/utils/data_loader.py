@@ -15,7 +15,7 @@ def get_documents():
     """Get or create the documents DataFrame (using shared indexer)"""
     global _documents
     if _documents is None:
-        from shared_indexer import get_shared_indexer
+        from services.shared_indexer import get_shared_indexer
         indexer = get_shared_indexer()
         _documents = indexer.documents.copy()
     return _documents

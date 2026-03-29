@@ -3,9 +3,9 @@ ML-based recommendation system using TF-IDF content-based filtering
 SE481 Project - Advanced Suggestions (ML approach)
 """
 from flask import Blueprint, request, jsonify, current_app
-from models import db, User, Folder, Bookmark, RecipeRating
-from api_auth import require_auth
-from shared_indexer import get_shared_indexer
+from models.models import db, User, Folder, Bookmark, RecipeRating
+from .api_auth import require_auth
+from services.shared_indexer import get_shared_indexer
 import pickle
 import logging
 import pandas as pd
@@ -278,10 +278,23 @@ def get_ml_recommendations():
         elapsed = time.time() - start_time
         logger.info(f"[ML] ✅ Generated {len(recipes)} recommendations in {elapsed:.3f}s")
 
+        # ✅ NEW: Log evidence of ML enhancement
+        avg_similarity = sum(r['similarity_score'] for r in recipes) / len(recipes) if recipes else 0
+        logger.info(f"[ML] 📊 EVIDENCE: Average similarity score = {avg_similarity:.3f}")
+        logger.info(f"[ML] 📊 EVIDENCE: Top recommendation similarity = {recipes[0]['similarity_score'] if recipes else 0:.3f}")
+        logger.info(f"[ML] 📊 EVIDENCE: Personalized for {len(valid_bookmarked_ids)} user bookmarks")
+        logger.info(f"[ML] 📊 EVIDENCE: Using {len(tfidf.vocabulary_)}-dimensional TF-IDF vector space")
+
         return jsonify({
             'method': 'tfidf_content_based',  # ML method name
             'ml_algorithm': 'TF-IDF (Term Frequency-Inverse Document Frequency)',  # Not kNN!
             'user_profile_size': len(valid_bookmarked_ids),
+            'ml_evidence': {  # ✅ NEW: Show ML evidence
+                'avg_similarity_score': round(avg_similarity, 3),
+                'top_similarity_score': round(recipes[0]['similarity_score'], 3) if recipes else 0,
+                'vocabulary_size': len(tfidf.vocabulary_),
+                'feature_space': f"{tfidf_matrix_cache.shape[1]} dimensions"
+            },
             'recommendations': recipes
         }), 200
 
@@ -334,3 +347,103 @@ def get_popular_recipes(top_k=10):
     except Exception as e:
         logger.error(f"[POPULAR] Error getting popular recipes: {e}")
         return []
+
+
+# ✅ NEW: Internal function for ML recommendations (without auth)
+def get_ml_recommendations_internal(user_id, top_k=10, folder_id=None):
+    """
+    Internal ML recommendations function (for comparison API)
+    Same logic as get_ml_recommendations but without auth decorators
+    """
+    import time
+    from models.models import db, User, Bookmark
+    start_time = time.time()
+
+    logger.info(f"[ML-INTERNAL] Generating recommendations for user {user_id}, top_k={top_k}")
+
+    try:
+        # 1. Get user's bookmarks
+        if folder_id:
+            user_bookmarks = Bookmark.query.filter_by(user_id=user_id, folder_id=folder_id).all()
+        else:
+            user_bookmarks = Bookmark.query.filter_by(user_id=user_id).all()
+
+        if not user_bookmarks:
+            logger.info(f"[ML-INTERNAL] No bookmarks, returning popular recipes")
+            return get_popular_recipes(top_k)
+
+        # 2. Load TF-IDF model
+        tfidf = load_tfidf_model()
+        if tfidf is None:
+            return get_popular_recipes(top_k)
+
+        # 3. Get indexer documents
+        indexer = get_shared_indexer()
+        df = indexer.documents
+
+        # 4. Build user profile and get recommendations (same logic as get_ml_recommendations)
+        bookmarked_recipe_ids = [b.recipe_id for b in user_bookmarks]
+        valid_bookmarked_ids = [rid for rid in bookmarked_recipe_ids if rid in df.index]
+
+        if not valid_bookmarked_ids:
+            return get_popular_recipes(top_k)
+
+        bookmarked_recipes = df.loc[valid_bookmarked_ids]
+
+        # Build user profile
+        user_profile_parts = []
+        for _, recipe in bookmarked_recipes.iterrows():
+            if pd.notna(recipe.get('ingredient_parts')):
+                user_profile_parts.append(str(recipe['ingredient_parts']))
+            if pd.notna(recipe.get('name')):
+                user_profile_parts.append(str(recipe['name']))
+
+        user_profile_text = ' '.join(user_profile_parts)
+
+        # Get recommendations using TF-IDF
+        tfidf_matrix_cache, recipe_index_cache = load_tfidf_matrix_cache()
+        if tfidf_matrix_cache is None:
+            return get_popular_recipes(top_k)
+
+        user_vector = tfidf.transform([user_profile_text])
+        similarities = cosine_similarity(user_vector, tfidf_matrix_cache).flatten()
+
+        bookmarked_indices = [df.index.get_loc(rid) for rid in valid_bookmarked_ids if rid in df.index]
+        similarities[bookmarked_indices] = 0
+
+        top_indices = np.argsort(similarities)[::-1][:top_k]
+        valid_recommendations = [(idx, similarities[idx]) for idx in top_indices if similarities[idx] > 0]
+
+        if not valid_recommendations:
+            return get_popular_recipes(top_k)
+
+        recommendation_indices = [idx for idx, _ in valid_recommendations]
+        recommendation_scores = [score for _, score in valid_recommendations]
+
+        recommended_recipes = df.iloc[recommendation_indices]
+
+        recipes = []
+        for idx, (_, recipe) in enumerate(recommended_recipes.iterrows()):
+            recipes.append({
+                'recipe_id': int(recipe['recipe_id']),
+                'name': str(recipe['name']),
+                'category': str(recipe['category']) if pd.notna(recipe['category']) else 'Unknown',
+                'images': str(recipe['images']) if pd.notna(recipe['images']) else None,
+                'ingredient_parts': str(recipe['ingredient_parts']) if pd.notna(recipe.get('ingredient_parts')) else '',
+                'instructions': str(recipe['instructions']) if pd.notna(recipe.get('instructions')) else '',
+                'aggregated_rating': float(recipe['aggregated_rating']) if pd.notna(recipe['aggregated_rating']) else 0.0,
+                'review_count': int(recipe['review_count']) if pd.notna(recipe['review_count']) else 0,
+                'total_time': str(recipe['total_time']) if pd.notna(recipe['total_time']) else '30 min',
+                'similarity_score': float(recommendation_scores[idx]),
+                'description': (str(recipe['processed_text'])[:200] + '...') if pd.notna(recipe.get('processed_text')) and len(str(recipe['processed_text'])) > 200 else str(recipe['processed_text']) if pd.notna(recipe.get('processed_text')) else ''
+            })
+
+        elapsed = time.time() - start_time
+        logger.info(f"[ML-INTERNAL] ✅ Generated {len(recipes)} recommendations in {elapsed:.3f}s")
+
+        return recipes
+
+    except Exception as e:
+        elapsed = time.time() - start_time
+        logger.error(f"[ML-INTERNAL] ❌ Error: {e}")
+        return get_popular_recipes(top_k)

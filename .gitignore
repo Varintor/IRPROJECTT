@@ -33,3 +33,8 @@ backend/resources/recipe_index_cache.pkl
 backend/resources/tfidf_matrix_cache.pkl
 backend/backend_new.log
 backend/backend_optimized.log
+backend/ML_EVIDENCE.md
+backend/README.md
+backend/REQUIREMENTS_CHECKLIST.md
+backend/WORKFLOW_DOCUMENTATION.md
+backend/WORKFLOW_VISUAL.txt

@@ -2,7 +2,11 @@
 Shared indexer singleton - preload once, use everywhere
 This prevents loading the PKL file multiple times
 """
-from indexer_pkl import IndexerFromPKL
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from services.indexer_pkl import IndexerFromPKL
 import logging
 
 logger = logging.getLogger(__name__)
