@@ -7,6 +7,7 @@ from api_auth import require_auth
 from datetime import datetime
 from shared_indexer import get_shared_indexer
 import logging
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -327,8 +328,9 @@ def get_recipe_by_id(recipe_id):
 @api_bookmarks_bp.route('/api/bookmarks', methods=['GET'])
 @require_auth
 def get_bookmarks():
-    """Get all bookmarks, optionally filtered by folder"""
+    """Get all bookmarks RANKED by user's average rating (UC-006 requirement)"""
     import time
+    from sqlalchemy import and_
     start_time = time.time()
 
     folder_id = request.args.get('folder_id', type=int)
@@ -336,20 +338,59 @@ def get_bookmarks():
     logger.info(f"[BOOKMARKS] Fetching for user {request.user.user_id}, folder {folder_id}")
 
     try:
-        # ✅ FIX: Use default db.session with explicit cleanup
-        query = Bookmark.query.filter_by(user_id=request.user.user_id)
+        # ✅ REQUIREMENT UC-006: Join with RecipeRating to get user's ratings
+        query = db.session.query(
+            Bookmark,
+            RecipeRating.rating
+        ).outerjoin(
+            RecipeRating,
+            and_(
+                Bookmark.recipe_id == RecipeRating.recipe_id,
+                Bookmark.user_id == RecipeRating.user_id
+            )
+        ).filter(Bookmark.user_id == request.user.user_id)
 
         if folder_id:
-            query = query.filter_by(folder_id=folder_id)
+            query = query.filter(Bookmark.folder_id == folder_id)
 
         # ✅ OPTIMIZATION: Limit results to prevent timeout
-        bookmarks = query.order_by(Bookmark.created_at.desc()).limit(1000).all()
+        bookmarks_data = query.limit(1000).all()
+
+        # ✅ ENHANCEMENT: Add images from indexer
+        indexer = get_shared_indexer()
+        df = indexer.documents
+
+        result_bookmarks = []
+        for bookmark, rating in bookmarks_data:
+            bookmark_dict = bookmark.to_dict()
+
+            # ✅ REQUIREMENT UC-006: Add user's rating (use 0 if not rated)
+            bookmark_dict['user_rating'] = float(rating) if rating is not None else 0.0
+
+            # ✅ Add image URL from indexer
+            try:
+                if bookmark.recipe_id in df.index:
+                    recipe = df.loc[bookmark.recipe_id]
+                    bookmark_dict['image'] = recipe['images'] if pd.notna(recipe['images']) else None
+                else:
+                    bookmark_dict['image'] = None
+            except Exception as e:
+                logger.warning(f"[BOOKMARKS] Failed to get image for recipe {bookmark.recipe_id}: {e}")
+                bookmark_dict['image'] = None
+
+            result_bookmarks.append(bookmark_dict)
+
+        # ✅ REQUIREMENT UC-006: RANK by user's rating (highest first, unrated last)
+        result_bookmarks.sort(key=lambda x: (
+            -x['user_rating'],  # Negative for descending (rated first)
+            x['created_at']     # Then by date for same rating
+        ))
 
         elapsed = time.time() - start_time
-        logger.info(f"[BOOKMARKS] ✅ Fetched {len(bookmarks)} bookmarks in {elapsed:.3f}s")
+        logger.info(f"[BOOKMARKS] ✅ Fetched {len(result_bookmarks)} bookmarks in {elapsed:.3f}s")
 
         result = {
-            'bookmarks': [bookmark.to_dict() for bookmark in bookmarks]
+            'bookmarks': result_bookmarks
         }
 
         # Close session to prevent connection pool exhaustion

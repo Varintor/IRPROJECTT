@@ -31,9 +31,11 @@ def shutdown_session(exception=None):
 # Import and register blueprints AFTER app is created (avoid circular import)
 from api_auth import api_auth_bp
 from api_bookmarks import api_bookmarks_bp
+from api_recommendations import api_recommendations_bp
 
 app.register_blueprint(api_auth_bp)
 app.register_blueprint(api_bookmarks_bp)
+app.register_blueprint(api_recommendations_bp)
 
 # Spell checker (using shared indexer)
 spell_checker = None
