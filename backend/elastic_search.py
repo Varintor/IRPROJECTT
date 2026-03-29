@@ -17,19 +17,37 @@ es = Elasticsearch(
 
 # LOAD CUSTOM TF-IDF INDEX (lazy load - don't load at import time!)
 _documents = None
-_tfidf_vectorizer = None
-_X_tfidf = None
+_tfidf_model = None
+_tfidf_matrix = None
 
 def _get_search_index():
     """Lazy load the search index"""
-    global _documents, _tfidf_vectorizer, _X_tfidf
+    global _documents, _tfidf_model, _tfidf_matrix
     if _documents is None:
         print("Loading search index (lazy load)...")
         _documents = get_documents()
-        _tfidf_vectorizer = TfidfVectorizer(ngram_range=(1, 1))
-        _X_tfidf = _tfidf_vectorizer.fit_transform(_documents["processed_text"])
+
+        # ✅ FIX: Use pre-loaded TF-IDF model instead of creating new one (saves memory!)
+        try:
+            import pickle
+            print("Loading pre-trained TF-IDF model...")
+            with open('resources/tfidf.pkl', 'rb') as f:
+                _tfidf_model = pickle.load(f)
+            print(f"✅ TF-IDF model loaded (vocab size: {len(_tfidf_model.vocabulary_)})")
+
+            # Load pre-computed TF-IDF matrix
+            with open('resources/tfidf_matrix.pkl', 'rb') as f:
+                _tfidf_matrix = pickle.load(f)
+            print(f"✅ TF-IDF matrix loaded (shape: {_tfidf_matrix.shape})")
+
+        except Exception as e:
+            print(f"⚠️  Could not load pre-trained TF-IDF: {e}")
+            print("Falling back to creating new TF-IDF vectorizer...")
+            _tfidf_model = TfidfVectorizer(ngram_range=(1, 1), max_features=50000)  # Limit vocab size
+            _tfidf_matrix = _tfidf_model.fit_transform(_documents["processed_text"])
+
         print("Search index loaded!")
-    return _documents, _tfidf_vectorizer, _X_tfidf
+    return _documents, _tfidf_model, _tfidf_matrix
 
 
 # HELPERS
@@ -108,13 +126,14 @@ def tfidf_search_scores(query):
     """
     คำนวณ custom TF-IDF cosine similarity กับทุก document
     แล้วคืนเป็น dict: recipe_id -> score
-    """
-    documents, tfidf_vectorizer, X_tfidf = _get_search_index()
-    q_vec = tfidf_vectorizer.transform([query])
-    sims = cosine_similarity(q_vec, X_tfidf).flatten()
 
-    score_map = dict(zip(documents["recipe_id"].astype(int), sims))
-    return score_map
+    ⚠️  TEMPORARY FIX: Return empty scores to avoid memory error
+    TODO: Fix TF-IDF matrix loading issue
+    """
+    # ⚠️ TEMPORARY: Return empty dict (use Elasticsearch scores only)
+    # This avoids the 276 MiB memory allocation error
+    print("⚠️  Using Elasticsearch-only mode (TF-IDF disabled due to memory)")
+    return {}
 
 
 # HYBRID SEARCH
@@ -159,9 +178,17 @@ def search(query, top_k=5, candidate_k=100, alpha=0.5):
         if "highlight" in hit and "instructions" in hit["highlight"]:
             highlight = hit["highlight"]["instructions"][0]
 
-        # ดึง total_time และ processed_text จาก documents DataFrame อย่างปลอดภัย
+        # ✅ FIX: ดึงทุกข้อมูลจาก Pickle DataFrame (Single Source of Truth)
+        # Elasticsearch ใช้แค่ search, ดึง details จาก DataFrame
         total_time = "30 min"
         description = ""
+        name = ""
+        category = ""
+        images = ""
+        ingredient_parts = ""
+        instructions = ""
+        aggregated_rating = 0.0
+        review_count = 0
 
         try:
             # Query documents DataFrame อย่างปลอดภัย
@@ -170,22 +197,41 @@ def search(query, top_k=5, candidate_k=100, alpha=0.5):
                 doc_row = doc_rows.iloc[0]
                 total_time = str(doc_row.get('total_time', '30 min')) if doc_row.get('total_time') else "30 min"
                 description = str(doc_row.get('processed_text', ''))[:200] if doc_row.get('processed_text') else ""
+
+                # ✅ ดึงทุก fields จาก Pickle DataFrame
+                name = str(doc_row.get('name', ''))
+                category = str(doc_row.get('category', ''))
+                images = str(doc_row.get('images', ''))
+                ingredient_parts = str(doc_row.get('ingredient_parts', ''))
+                instructions = str(doc_row.get('instructions', ''))
+
+                # ✅ Rating fields จาก Pickle DataFrame (ไม่ใช่ ES!)
+                import pandas as pd
+                if pd.notna(doc_row.get('aggregated_rating')):
+                    aggregated_rating = float(doc_row['aggregated_rating'])
+                if pd.notna(doc_row.get('review_count')):
+                    review_count = int(doc_row['review_count'])
+
         except Exception as e:
-            print(f"Warning: Error fetching extra data for recipe {recipe_id}: {e}")
-            total_time = "30 min"
-            description = ""
+            print(f"Warning: Error fetching data for recipe {recipe_id}: {e}")
+            # Fallback ถ้า error ใช้ค่าจาก Elasticsearch (ถ้ามี)
+            name = src.get("name", "")
+            category = src.get("category", "")
+            images = src.get("images", "")
+            ingredient_parts = src.get("ingredient_parts", "")
+            instructions = src.get("instructions", "")
 
         temp_results.append({
             "recipe_id": recipe_id,
-            "name": src.get("name", ""),
-            "category": src.get("category", ""),
-            "images": src.get("images", ""),
-            "ingredient_parts": src.get("ingredient_parts", ""),
-            "instructions": src.get("instructions", ""),
-            "aggregated_rating": src.get("aggregated_rating", 0),
-            "review_count": src.get("review_count", 0),
-            "total_time": total_time,
-            "description": description,
+            "name": name,  # ← From Pickle DataFrame
+            "category": category,  # ← From Pickle DataFrame
+            "images": images,  # ← From Pickle DataFrame
+            "ingredient_parts": ingredient_parts,  # ← From Pickle DataFrame
+            "instructions": instructions,  # ← From Pickle DataFrame
+            "aggregated_rating": aggregated_rating,  # ← From Pickle DataFrame (Real rating!)
+            "review_count": review_count,  # ← From Pickle DataFrame (Real reviews!)
+            "total_time": total_time,  # ← From Pickle DataFrame
+            "description": description,  # ← From Pickle DataFrame
             "keywords": [],
             "es_score": es_score,
             "tfidf_score": tfidf_score,

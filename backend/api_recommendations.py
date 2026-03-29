@@ -16,9 +16,26 @@ logger = logging.getLogger(__name__)
 
 api_recommendations_bp = Blueprint('api_recommendations', __name__)
 
+# ✅ NEW: Preload cache on module import (background)
+_preloading = False
+def preload_cache():
+    """Preload TF-IDF matrix cache in background"""
+    global _preloading
+    if not _preloading:
+        _preloading = True
+        import threading
+        def _preload():
+            logger.info("[ML] Starting background preload of TF-IDF matrix...")
+            load_tfidf_matrix_cache()
+            logger.info("[ML] ✅ Background preload complete")
+        thread = threading.Thread(target=_preload, daemon=True)
+        thread.start()
+
 # Cache for ML models to avoid reloading
 _tfidf_model = None
 _recipe_id_to_idx = None
+_tfidf_matrix_cache = None  # ✅ NEW: Cache pre-computed TF-IDF matrix
+_recipe_index_cache = None  # ✅ NEW: Cache recipe ID to index mapping
 
 def load_tfidf_model():
     """Load TF-IDF model from disk (cached)"""
@@ -33,6 +50,62 @@ def load_tfidf_model():
             logger.error(f"[ML] ❌ Failed to load TF-IDF model: {e}")
             _tfidf_model = None
     return _tfidf_model
+
+def load_tfidf_matrix_cache():
+    """Load or pre-compute TF-IDF matrix cache"""
+    global _tfidf_matrix_cache, _recipe_index_cache
+
+    if _tfidf_matrix_cache is None:
+        try:
+            logger.info("[ML] Loading TF-IDF matrix cache...")
+
+            # Try to load pre-computed matrix from disk
+            try:
+                with open('resources/tfidf_matrix_cache.pkl', 'rb') as f:
+                    _tfidf_matrix_cache = pickle.load(f)
+                with open('resources/recipe_index_cache.pkl', 'rb') as f:
+                    _recipe_index_cache = pickle.load(f)
+                logger.info(f"[ML] ✅ TF-IDF matrix cache loaded: shape {_tfidf_matrix_cache.shape}")
+                return _tfidf_matrix_cache, _recipe_index_cache
+            except FileNotFoundError:
+                logger.info("[ML] No cache found, pre-computing TF-IDF matrix...")
+
+            # Pre-compute and cache
+            indexer = get_shared_indexer()
+            df = indexer.documents
+
+            # Build text for all recipes
+            all_recipe_texts = (
+                df['ingredient_parts'].fillna('') + ' ' +
+                df['name'].fillna('')
+            ).tolist()
+
+            logger.info(f"[ML] Computing TF-IDF matrix for {len(all_recipe_texts)} recipes...")
+            tfidf = load_tfidf_model()
+            if tfidf is None:
+                return None, None
+
+            # Transform all recipes to TF-IDF vectors (ONE TIME ONLY)
+            _tfidf_matrix_cache = tfidf.transform(all_recipe_texts)
+
+            # Create recipe ID to index mapping
+            _recipe_index_cache = dict(zip(df['recipe_id'].astype(int), range(len(df))))
+
+            # Save to disk for next time
+            logger.info("[ML] Saving TF-IDF matrix cache to disk...")
+            with open('resources/tfidf_matrix_cache.pkl', 'wb') as f:
+                pickle.dump(_tfidf_matrix_cache, f)
+            with open('resources/recipe_index_cache.pkl', 'wb') as f:
+                pickle.dump(_recipe_index_cache, f)
+
+            logger.info(f"[ML] ✅ TF-IDF matrix cached: shape {_tfidf_matrix_cache.shape}")
+
+        except Exception as e:
+            logger.error(f"[ML] ❌ Failed to load TF-IDF matrix cache: {e}")
+            _tfidf_matrix_cache = None
+            _recipe_index_cache = None
+
+    return _tfidf_matrix_cache, _recipe_index_cache
 
 def load_recipe_mapping():
     """Load recipe_id to index mapping (cached)"""
@@ -60,6 +133,10 @@ def get_ml_recommendations():
     - Recommends similar recipes based on ingredients and names
     - NOT kNN - this is a valid ML approach for SE481
 
+    Parameters:
+    - top_k: Number of recommendations to return (default: 10)
+    - folder_id: Optional - Filter bookmarks by specific folder
+
     Returns: Recipe recommendations ranked by similarity score
     """
     import time
@@ -67,12 +144,18 @@ def get_ml_recommendations():
 
     user_id = request.user.user_id
     top_k = request.args.get('top_k', 10, type=int)
+    folder_id = request.args.get('folder_id', type=int)  # ✅ NEW: Filter by folder
 
-    logger.info(f"[ML] Generating recommendations for user {user_id}, top_k={top_k}")
+    logger.info(f"[ML] Generating recommendations for user {user_id}, top_k={top_k}, folder_id={folder_id}")
 
     try:
-        # 1. Get user's bookmarks
-        user_bookmarks = Bookmark.query.filter_by(user_id=user_id).all()
+        # 1. Get user's bookmarks (filtered by folder if specified)
+        if folder_id:
+            user_bookmarks = Bookmark.query.filter_by(user_id=user_id, folder_id=folder_id).all()
+            logger.info(f"[ML] Filtering by folder {folder_id}: {len(user_bookmarks)} bookmarks")
+        else:
+            user_bookmarks = Bookmark.query.filter_by(user_id=user_id).all()
+            logger.info(f"[ML] Using all folders: {len(user_bookmarks)} bookmarks")
 
         if not user_bookmarks:
             logger.info(f"[ML] User {user_id} has no bookmarks, returning popular recipes")
@@ -129,23 +212,26 @@ def get_ml_recommendations():
 
         logger.info(f"[ML] User profile length: {len(user_profile_text)} chars")
 
-        # 6. Transform user profile to TF-IDF vector
+        # 6. ✅ FAST: Use cached TF-IDF matrix (no re-computation!)
+        tfidf_matrix_cache, recipe_index_cache = load_tfidf_matrix_cache()
+
+        if tfidf_matrix_cache is None:
+            logger.error("[ML] TF-IDF matrix cache unavailable, using fallback")
+            return jsonify({
+                'method': 'popular_fallback',
+                'message': 'ML model unavailable - showing popular recipes',
+                'recipes': get_popular_recipes(top_k)
+            }), 200
+
+        # Transform user profile to TF-IDF vector
         user_vector = tfidf.transform([user_profile_text])
 
-        # 7. Transform all recipes to TF-IDF vectors
-        # Build text for all recipes (ingredients + names)
-        all_recipe_texts = (
-            df['ingredient_parts'].fillna('') + ' ' +
-            df['name'].fillna('')
-        ).tolist()
-
-        # Transform in batches to avoid memory issues
-        logger.info(f"[ML] Transforming {len(all_recipe_texts)} recipes...")
-        tfidf_matrix = tfidf.transform(all_recipe_texts)
-
-        # 8. Compute cosine similarities
-        logger.info("[ML] Computing similarities...")
-        similarities = cosine_similarity(user_vector, tfidf_matrix).flatten()
+        # 7. ✅ FAST: Matrix multiplication (much faster than cosine_similarity!)
+        logger.info("[ML] Computing similarities (using cached matrix)...")
+        # cosine_similarity(a, b) = (a @ b.T) / (||a|| * ||b||)
+        # But sklearn's cosine_similarity is already optimized, so we use it
+        # The speedup comes from NOT re-computing tfidf_matrix every time!
+        similarities = cosine_similarity(user_vector, tfidf_matrix_cache).flatten()
 
         # 9. Exclude already bookmarked recipes
         bookmarked_indices = [df.index.get_loc(rid) for rid in valid_bookmarked_ids if rid in df.index]

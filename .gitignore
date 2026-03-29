@@ -29,3 +29,7 @@ backend/resources/Ml.ipynb
 backend/resources/recipe_id_to_idx.pkl
 backend/resources/svd.pkl
 backend/resources/tfidf.pkl
+backend/resources/recipe_index_cache.pkl
+backend/resources/tfidf_matrix_cache.pkl
+backend/backend_new.log
+backend/backend_optimized.log

@@ -37,6 +37,10 @@ app.register_blueprint(api_auth_bp)
 app.register_blueprint(api_bookmarks_bp)
 app.register_blueprint(api_recommendations_bp)
 
+# ✅ NEW: Preload ML models in background
+from api_recommendations import preload_cache
+preload_cache()
+
 # Spell checker (using shared indexer)
 spell_checker = None
 _spell_checker_loaded = False

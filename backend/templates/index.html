@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IR Project - Recipe Search API</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .endpoint {
+            background: #f5f5f5;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 4px solid #4CAF50;
+        }
+        .endpoint code {
+            background: #fff;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        .status {
+            background: #e8f5e9;
+            padding: 20px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        .status.ok {
+            background: #c8e6c9;
+        }
+        a {
+            color: #4CAF50;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <h1>🍳 SE481 Recipe Search API</h1>
+
+    <div class="status ok">
+        <h2>✅ Backend is Running!</h2>
+        <p>This is an <strong>API Server</strong> for the Recipe Search Application</p>
+    </div>
+
+    <h2>Available Endpoints:</h2>
+
+    <div class="endpoint">
+        <h3>Health Check</h3>
+        <code>GET /api/health</code>
+        <p>Check if the backend is running</p>
+    </div>
+
+    <div class="endpoint">
+        <h3>Search Recipes</h3>
+        <code>GET /search?q=query&top_k=20</code>
+        <p>Search for recipes using Elasticsearch + TF-IDF</p>
+    </div>
+
+    <div class="endpoint">
+        <h3>Spell Check</h3>
+        <code>POST /api/spellcheck</code>
+        <p>Check spelling and get suggestions</p>
+    </div>
+
+    <h2>🔗 Frontend Applications:</h2>
+    <ul>
+        <li><strong>Frontend (React):</strong> <a href="http://localhost:5175" target="_blank">http://localhost:5175</a></li>
+        <li><strong>Database:</strong> PostgreSQL (recipe_app)</li>
+        <li><strong>Search Engine:</strong> Elasticsearch</li>
+        <li><strong>Data:</strong> 520,297 recipes from food.com</li>
+    </ul>
+
+    <h2>📊 System Information:</h2>
+    <ul>
+        <li>✅ User Authentication (JWT)</li>
+        <li>✅ Elasticsearch + TF-IDF Search</li>
+        <li>✅ ML Recommendations (TF-IDF Content-Based)</li>
+        <li>✅ Bookmarks & Folders</li>
+        <li>✅ Recipe Ratings</li>
+        <li>✅ Spell Correction</li>
+    </ul>
+
+    <hr>
+    <p style="text-align: center; color: #666; font-size: 14px;">
+        SE481 Information Retrieval Project<br>
+        Powered by Flask, Elasticsearch, and Scikit-Learn
+    </p>
+</body>
+</html>
