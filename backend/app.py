@@ -38,12 +38,16 @@ def shutdown_session(exception=None):
 from api.api_auth import api_auth_bp
 from api.api_bookmarks import api_bookmarks_bp
 from api.api_recommendations import api_recommendations_bp
-from api.api_ml_comparison import api_ml_comparison_bp  # ✅ NEW: ML comparison API
+from api.api_ml_comparison import api_ml_comparison_bp
+from api.api_autocomplete import api_autocomplete_bp
+from api.api_faceted_search import api_faceted_search_bp  # ✅ NEW: Faceted search API
 
 app.register_blueprint(api_auth_bp)
 app.register_blueprint(api_bookmarks_bp)
 app.register_blueprint(api_recommendations_bp)
-app.register_blueprint(api_ml_comparison_bp)  # ✅ NEW: Register ML comparison
+app.register_blueprint(api_ml_comparison_bp)
+app.register_blueprint(api_autocomplete_bp)
+app.register_blueprint(api_faceted_search_bp)  # ✅ NEW: Register faceted search
 
 # ✅ NEW: Preload ML models in background
 from api.api_recommendations import preload_cache
